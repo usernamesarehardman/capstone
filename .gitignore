@@ -1,0 +1,16 @@
+# Do not publish to public repo
+Data & Traffic Engineer/docs/NOT_IN_REPO.txt
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Data and outputs (optional: remove if you want to track small samples)
+data/
+parsed/
+dataset/
+*.pcap

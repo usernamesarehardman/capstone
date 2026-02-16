@@ -1,0 +1,13 @@
+# WF-Guard Data & Traffic Engineer pipeline
+# Python 3.8+
+
+# PCAP capture and parsing
+pyshark>=0.6
+# Alternative: scapy>=2.5 (uncomment if preferred over PyShark)
+
+# Data processing and feature export
+pandas>=1.5
+numpy>=1.23
+
+# Optional: Parquet output for parsed sessions
+pyarrow>=12.0
