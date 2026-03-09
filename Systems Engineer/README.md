@@ -7,8 +7,9 @@ A Streamlit-based real-time dashboard for the WF-Guard capstone project. Visuali
 ## Quick Start
 
 ```bash
+source venv/Scripts/activate  
 pip install streamlit pandas numpy
-streamlit dashboard.py
+streamlit run dashboard.py
 ```
 
 Then open `http://localhost:8501` in your browser.
