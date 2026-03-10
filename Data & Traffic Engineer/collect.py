@@ -1,3 +1,11 @@
+"""
+Automates the traffic collection with Selenium and Geckodriver on Tor Browser.
+
+NETWORK_INTERFACE - Change to appropriate name to your network adapter name
+PCAP_SAVE_DIR - Directory path to the file you want the pcap files to be saved to
+NUM_TRACES_PER_SITE - Designates the number of traces per website to run
+CAPTURE_DURATION - The number of seconds per traffic time read per trace.
+"""
 import os
 import time
 import subprocess
