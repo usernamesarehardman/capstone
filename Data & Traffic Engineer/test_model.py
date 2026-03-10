@@ -1,3 +1,10 @@
+"""
+Lightweight model to just test Random Trees classifier to see if data is acceptable. Will not use a lot of traces.
+
+
+PCAP_DIR - Directory path to folder containing the wanted pcap files to train on
+MAX_PACKETS - Maximum packets to train on (1500 recommended)
+"""
 import os
 import numpy as np
 from scapy.all import rdpcap, IP
