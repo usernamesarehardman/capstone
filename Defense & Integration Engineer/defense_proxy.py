@@ -323,6 +323,83 @@ def fetch(
 
 
 # ---------------------------------------------------------------------------
+# Cover Traffic (Dummy Packet Injection)
+# ---------------------------------------------------------------------------
+
+# Lightweight endpoints — HEAD requests only, no content downloaded
+_COVER_URLS = [
+    "https://www.wikipedia.org",
+    "https://www.reddit.com",
+    "https://www.github.com",
+    "https://www.bbc.com",
+    "https://www.reuters.com",
+    "https://www.archive.org",
+    "https://www.python.org",
+    "https://www.stackoverflow.com",
+]
+
+_cover_stop = threading.Event()   # Set to stop the cover traffic thread
+
+def _cover_traffic_worker(interval: tuple):
+    """
+    Background thread: sends randomized HEAD requests through Tor
+    to inject cover traffic and obscure real request patterns.
+
+    Pauses automatically when defense is disabled via the kill switch.
+    Interval is sampled the same way as fetch() — learned profile or random fallback.
+    """
+    session = new_session()
+    log.info("Cover traffic worker started.")
+
+    while not _cover_stop.is_set():
+        if not is_defense_enabled():
+            # Defense is off — idle until re-enabled
+            time.sleep(0.5)
+            continue
+
+        url = random.choice(_COVER_URLS)
+        try:
+            session.request("HEAD", url, timeout=10, proxies=DEFAULT_PROXIES)
+            log.debug("Cover traffic → HEAD %s", url)
+        except Exception:
+            pass   # Cover traffic failures are silent — don't disrupt real traffic
+
+        # Randomized interval: learned profile or fallback range
+        sleep_for = _sample_delay(interval)
+        _cover_stop.wait(timeout=sleep_for)   # Interruptible sleep
+
+    log.info("Cover traffic worker stopped.")
+
+
+def start_cover_traffic(interval: tuple = (1.0, 5.0)) -> threading.Thread:
+    """
+    Start sending cover traffic in a background daemon thread.
+
+    Args:
+        interval: (min, max) seconds between cover requests when no traffic
+                  profile is loaded. Ignored once dataset_manager is active.
+
+    Returns the thread so you can join it if needed.
+    """
+    _cover_stop.clear()
+    t = threading.Thread(
+        target=_cover_traffic_worker,
+        args=(interval,),
+        daemon=True,
+        name="cover-traffic",
+    )
+    t.start()
+    log.info("Cover traffic started (interval fallback: %.1f–%.1fs).", *interval)
+    return t
+
+
+def stop_cover_traffic():
+    """Signal the cover traffic thread to stop cleanly."""
+    _cover_stop.set()
+    log.info("Cover traffic stop requested.")
+
+
+# ---------------------------------------------------------------------------
 # Utility: Verify Tor is working
 # ---------------------------------------------------------------------------
 
@@ -357,6 +434,10 @@ if __name__ == "__main__":
         print("[+] Traffic profile loaded — using learned delays.")
     else:
         print("[~] No pcap data found — using random delay fallback.")
+
+    # Start cover traffic injection
+    start_cover_traffic()
+    print("[+] Cover traffic active — dummy requests running in background.")
 
     # 1. Confirm we're routing through Tor
     exit_ip = check_tor_ip()

@@ -2,6 +2,17 @@
 
 ---
 
+## v1.2.5 — 2026-03-27
+
+- Added `_COVER_URLS`: pool of 8 public sites used as decoy targets (HEAD requests only — no content downloaded).
+- Added `_cover_traffic_worker(interval)`: background daemon thread that fires randomized HEAD requests through Tor to inject cover traffic. Idles automatically when the kill switch is OFF. Uses `_sample_delay()` for inter-request timing (same learned profile as `fetch()`).
+- Added `start_cover_traffic(interval)`: launches the cover traffic worker thread. Default fallback interval is 1.0–5.0 seconds when no traffic profile is loaded.
+- Added `stop_cover_traffic()`: cleanly signals the worker thread to exit.
+- Added `_cover_stop` event: `threading.Event` used to interrupt the worker's sleep and stop it without delay.
+- Changed `__main__` block: calls `start_cover_traffic()` at startup.
+
+---
+
 ## v1.2.0 — 2026-03-27
 
 - Added `init_dataset_manager(directory)`: loads pcap files, trains a `DatasetManager` traffic profile, and sets the module-level `_dm` instance. Returns `True` if data was found, `False` if falling back to random delays.
