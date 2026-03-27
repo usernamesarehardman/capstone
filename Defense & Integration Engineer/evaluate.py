@@ -21,8 +21,6 @@ import time
 import statistics
 from dataclasses import dataclass, field
 
-import requests
-
 from defense_proxy import (
     new_session,
     fetch,

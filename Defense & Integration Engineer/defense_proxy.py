@@ -1,6 +1,6 @@
 """
-tor_proxy.py
-============
+defense_proxy.py
+================
 SOCKS5 proxy client designed for use with Tor.
 Provides anti-fingerprinting via randomized headers, request timing,
 and easy session management.
