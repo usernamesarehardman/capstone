@@ -2,6 +2,17 @@
 
 ---
 
+## v1.3.0 — 2026-03-27 — evaluate.py (new file)
+
+- Added `evaluate.py`: Phase 5 evaluation script that benchmarks defense ON vs OFF across a configurable set of test URLs.
+- Added `PhaseResults` dataclass: collects per-request latency and bytes received for a single defense state.
+- Added `RequestResult` dataclass: stores outcome (success/fail), latency, and byte count for a single request.
+- Added `run_phase(state, urls, runs)`: fetches each URL `runs` times with the current defense state and returns a `PhaseResults` object.
+- Added `print_report(on, off)`: prints a comparison table of bandwidth overhead, latency overhead, and success rate; saves output to `evaluation_results.txt`.
+- Outputs bandwidth overhead formula (`Total Bytes ON / Total Bytes OFF`) matching the Phase 5 rubric metric.
+
+---
+
 ## v1.2.5 — 2026-03-27
 
 - Added `_COVER_URLS`: pool of 8 public sites used as decoy targets (HEAD requests only — no content downloaded).
