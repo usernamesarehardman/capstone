@@ -17,26 +17,77 @@ Tor must be running locally (default: 127.0.0.1:9050)
 import time
 import random
 import logging
+import threading
 import requests
+
+# Optional: integrate dataset_manager for data-driven timing
+# pip install scapy pandas numpy scikit-learn joblib
+try:
+    from dataset_manager import DatasetManager, get_proxy_delay as _get_proxy_delay
+    _dataset_manager_available = True
+except ImportError:
+    _dataset_manager_available = False
+
+_dm = None   # DatasetManager instance — set by init_dataset_manager()
 
 # Optional: install fake-useragent for broader UA pool
 # pip install fake-useragent
+_UA_POOL = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
+    "Mozilla/5.0 (X11; Linux x86_64; rv:123.0) Gecko/20100101 Firefox/123.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+]
+
 try:
     from fake_useragent import UserAgent
     _ua = UserAgent()
     def random_user_agent():
         return _ua.random
 except ImportError:
-    # Fallback pool if fake-useragent isn't installed
-    _UA_POOL = [
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
-        "Mozilla/5.0 (X11; Linux x86_64; rv:123.0) Gecko/20100101 Firefox/123.0",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-    ]
     def random_user_agent():
         return random.choice(_UA_POOL)
+
+
+# ---------------------------------------------------------------------------
+# Dataset Manager Integration
+# ---------------------------------------------------------------------------
+
+def init_dataset_manager(directory: str = "data") -> bool:
+    """
+    Load pcap files from `directory` and train a traffic profile.
+    Returns True if data was found and loaded, False if falling back to
+    random delays (no pcaps available yet).
+
+    Call this once at startup before making requests.
+    """
+    global _dm
+    if not _dataset_manager_available:
+        log.warning("dataset_manager not available — using random delay fallback.")
+        return False
+    try:
+        dm = DatasetManager().load_directory(directory)
+        if not dm.flows:
+            log.warning("No pcap files found in '%s' — using random delay fallback.", directory)
+            return False
+        dm.train_models()
+        _dm = dm
+        log.info("DatasetManager ready — fetch() will use learned traffic profile.")
+        return True
+    except Exception as e:
+        log.warning("DatasetManager init failed (%s) — using random delay fallback.", e)
+        return False
+
+
+def _sample_delay(fallback: tuple) -> float:
+    """
+    Return a delay (seconds) for use in fetch().
+    Uses learned profile when available, otherwise random uniform fallback.
+    """
+    if _dm is not None:
+        return _get_proxy_delay(_dm)
+    return random.uniform(*fallback)
 
 
 # ---------------------------------------------------------------------------
@@ -56,6 +107,63 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
 log = logging.getLogger("tor_proxy")
+
+
+# ---------------------------------------------------------------------------
+# Kill Switch — toggle defense on/off with 'D' keypress (no Enter needed)
+# ---------------------------------------------------------------------------
+
+_defense_enabled = threading.Event()
+_defense_enabled.set()   # Defense ON by default
+
+def is_defense_enabled() -> bool:
+    return _defense_enabled.is_set()
+
+def _kill_switch_listener():
+    """
+    Background daemon thread: press 'D' to toggle the defense on/off.
+    Uses msvcrt on Windows for single-keypress detection (no Enter needed).
+    Falls back to stdin readline on other platforms.
+    """
+    try:
+        import msvcrt
+        print("[*] Kill switch active — press 'D' to toggle defense ON/OFF.")
+        while True:
+            if msvcrt.kbhit():
+                key = msvcrt.getch().decode(errors="ignore").upper()
+                if key == "D":
+                    if _defense_enabled.is_set():
+                        _defense_enabled.clear()
+                        print("\n[DEFENSE OFF] Anti-fingerprinting disabled.")
+                        log.info("Defense DISABLED via kill switch.")
+                    else:
+                        _defense_enabled.set()
+                        print("\n[DEFENSE ON]  Anti-fingerprinting enabled.")
+                        log.info("Defense ENABLED via kill switch.")
+            time.sleep(0.05)   # Poll at 20 Hz — low CPU, responsive
+    except (ImportError, UnicodeDecodeError):
+        # Non-Windows fallback: type 'D' + Enter
+        print("[*] Kill switch active — type 'D' + Enter to toggle defense ON/OFF.")
+        while True:
+            try:
+                line = input().strip().upper()
+                if line == "D":
+                    if _defense_enabled.is_set():
+                        _defense_enabled.clear()
+                        print("[DEFENSE OFF] Anti-fingerprinting disabled.")
+                        log.info("Defense DISABLED via kill switch.")
+                    else:
+                        _defense_enabled.set()
+                        print("[DEFENSE ON]  Anti-fingerprinting enabled.")
+                        log.info("Defense ENABLED via kill switch.")
+            except EOFError:
+                break
+
+def start_kill_switch():
+    """Spawn the kill switch listener as a background daemon thread."""
+    t = threading.Thread(target=_kill_switch_listener, daemon=True, name="kill-switch")
+    t.start()
+    return t
 
 
 # ---------------------------------------------------------------------------
@@ -181,13 +289,20 @@ def fetch(
     sess = session or new_session()
     kwargs.setdefault("timeout", 30)
 
-    # Refresh headers each call for fingerprint variance
-    sess.headers.update(build_headers())
+    # Refresh headers each call — only randomize when defense is active
+    if is_defense_enabled():
+        sess.headers.update(build_headers())
+    else:
+        sess.headers.update({"User-Agent": _UA_POOL[0]})  # Fixed UA when defense is off
 
     for attempt in range(1, retries + 1):
-        # Human-like timing jitter
-        sleep_for = random.uniform(*delay)
-        log.debug("Sleeping %.2fs before request (attempt %d/%d)", sleep_for, attempt, retries)
+        # Timing jitter only when defense is active
+        # Uses learned traffic profile if pcap data is loaded, else random fallback
+        sleep_for = _sample_delay(delay) if is_defense_enabled() else 0
+        log.debug("Sleeping %.2fs before request (attempt %d/%d) [defense=%s, profile=%s]",
+                  sleep_for, attempt, retries,
+                  "ON" if is_defense_enabled() else "OFF",
+                  "learned" if _dm is not None else "fallback")
         time.sleep(sleep_for)
 
         try:
@@ -233,6 +348,15 @@ if __name__ == "__main__":
     print("=" * 55)
     print("  Tor SOCKS5 Proxy — Capstone Project")
     print("=" * 55)
+
+    # Start kill switch in background
+    start_kill_switch()
+
+    # Load traffic profile from pcap data (falls back to random delay if none found)
+    if init_dataset_manager("data"):
+        print("[+] Traffic profile loaded — using learned delays.")
+    else:
+        print("[~] No pcap data found — using random delay fallback.")
 
     # 1. Confirm we're routing through Tor
     exit_ip = check_tor_ip()
