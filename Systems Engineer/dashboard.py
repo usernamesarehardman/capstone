@@ -15,6 +15,7 @@ To switch from fake → real data:
   4. Set DATA_SOURCE = "real" below
 """
 
+import os
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -28,6 +29,9 @@ from typing import Optional
 # ── CONFIG ──────────────────────────────────────────────────────────────────
 DATA_SOURCE = "fake"   # "fake" | "real"
 TOR_PORT    = 9150
+
+_HERE     = os.path.dirname(os.path.abspath(__file__))
+MODEL_DIR = os.path.join(_HERE, "..", "Machine Learning Engineer")
 WINDOW_SIZE = 100       # packets per feature window
 POLL_INTERVAL = 0.5    # seconds between UI refresh
 
@@ -210,34 +214,61 @@ class FakeDataSource:
         )
 
 
-# ── REAL DATA SOURCE STUB ─────────────────────────────────────────────────────
+# ── REAL DATA SOURCE ──────────────────────────────────────────────────────────
 class RealDataSource:
     """
-    TODO: Replace FakeDataSource with this once the pipeline is ready.
+    Live packet capture → feature extraction → model inference.
 
-    Integration checklist:
-    [ ] Import scapy AsyncSniffer
-    [ ] Import extract_features from extract_features.py
-    [ ] Load trained model (joblib.load or torch.load)
-    [ ] Implement capture_loop() below
+    Requires (in Machine Learning Engineer/):
+        model.joblib    — trained RandomForest
+        scaler.joblib   — fitted StandardScaler
+        label_map.json  — {int_index: site_name}
+
+    Generate those artifacts by running:
+        cd "Machine Learning Engineer"
+        python evaluate_models.py
     """
+
     def __init__(self, defense_active_fn):
         self.defense_active_fn = defense_active_fn
+        import joblib, json
+        self.model  = joblib.load(os.path.join(MODEL_DIR, "model.joblib"))
+        self.scaler = joblib.load(os.path.join(MODEL_DIR, "scaler.joblib"))
+        with open(os.path.join(MODEL_DIR, "label_map.json")) as f:
+            lmap = json.load(f)
+        # lmap keys are strings ("0", "1", ...) because JSON
+        self.labels = [lmap[str(i)] for i in range(len(lmap))]
 
     def get_next_result(self) -> InferenceResult:
-        raise NotImplementedError(
-            "RealDataSource not implemented yet. "
-            "Set DATA_SOURCE = 'fake' to use the fake data generator."
+        from scapy.all import AsyncSniffer
+        from extract_features import extract_features
+
+        sniffer = AsyncSniffer(
+            filter=f"tcp port {TOR_PORT}",
+            count=WINDOW_SIZE,
+            timeout=15,
         )
-        # Rough sketch of what this should do:
-        #
-        # packets = sniff_tor_window(port=TOR_PORT, count=WINDOW_SIZE)
-        # features = extract_features(packets)
-        # feature_vector = np.array([features[f] for f in FEATURE_NAMES])
-        # probs = model.predict_proba([feature_vector])[0]
-        # prediction = MONITORED_SITES[np.argmax(probs)]
-        # confidence = float(np.max(probs))
-        # return InferenceResult(...)
+        sniffer.start()
+        sniffer.join()
+        packets = list(sniffer.results or [])
+
+        model_vec, display_dict = extract_features(packets)
+        scaled    = self.scaler.transform([model_vec])
+        probs_arr = self.model.predict_proba(scaled)[0]
+
+        probs      = dict(zip(self.labels, probs_arr))
+        prediction = max(probs, key=probs.get)
+        confidence = probs[prediction]
+
+        return InferenceResult(
+            timestamp=time.time(),
+            prediction=prediction,
+            confidence=confidence,
+            probabilities=probs,
+            packets_in_window=len(packets),
+            features=display_dict,
+            defense_active=self.defense_active_fn(),
+        )
 
 
 # ── CAPTURE WORKER (background thread) ───────────────────────────────────────

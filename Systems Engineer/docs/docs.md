@@ -15,7 +15,7 @@
 
 The dashboard separates concerns into three layers:
 
-```
+```text
 ┌─────────────────────────────────────────────┐
 │              Streamlit UI Layer             │
 │  Metrics / Charts / Logs / Feature Expander │
@@ -49,7 +49,7 @@ When the system is running, the bottom of the script calls `st.rerun()` after a 
 The canonical output object passed from any data source to the UI.
 
 | Field | Type | Description |
-|---|---|---|
+| --- | --- | --- |
 | `timestamp` | `float` | Unix timestamp of inference |
 | `prediction` | `str` | Top predicted site label |
 | `confidence` | `float` | Probability of top prediction (0–1) |
@@ -63,7 +63,7 @@ The canonical output object passed from any data source to the UI.
 Internal representation of a single packet (used by `FakeDataSource`; mirrors what scapy would provide).
 
 | Field | Type | Description |
-|---|---|---|
+| --- | --- | --- |
 | `timestamp` | `float` | Packet capture time |
 | `size` | `int` | Payload size in bytes |
 | `direction` | `str` | `"outgoing"` or `"incoming"` |
@@ -92,7 +92,7 @@ The `defense_active_fn` parameter is a zero-argument callable returning `bool`. 
 Each monitored site has a traffic fingerprint defined by four parameters:
 
 | Parameter | Description |
-|---|---|
+| --- | --- |
 | `mean_size` | Mean packet size (bytes) |
 | `std_size` | Standard deviation of packet size |
 | `burst_rate` | Frequency of burst behavior (higher = more bursty) |
@@ -101,7 +101,7 @@ Each monitored site has a traffic fingerprint defined by four parameters:
 These parameters are intentionally distinct so the fake classifier produces meaningful, non-random predictions:
 
 | Site | Mean Size | Incoming Bias | Notes |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `youtube.com` | x | x | Large packets, very download-heavy |
 | `wikipedia.org` | x | x | Large response pages |
 | `amazon.com` | x | x | Mixed content |
@@ -113,7 +113,7 @@ These parameters are intentionally distinct so the fake classifier produces mean
 `FakeDataSource.extract_features()` computes the following over a window of `WINDOW_SIZE` packets:
 
 | Feature | Computation |
-|---|---|
+| --- | --- |
 | `total_packets` | `len(packets)` |
 | `total_bytes` | Sum of all packet sizes |
 | `outgoing_packets` / `incoming_packets` | Count by direction |
@@ -230,7 +230,7 @@ print("Feature alignment OK")
 All persistent state lives in `st.session_state`. Never access these with `[]` without ensuring `init_state()` has run first — use `.get(key, default)` in any context that might be called before initialization (e.g., lambda callbacks passed to threads).
 
 | Key | Type | Description |
-|---|---|---|
+| --- | --- | --- |
 | `running` | `bool` | Whether the capture worker is active |
 | `result_queue` | `queue.Queue` | Thread-safe channel from worker to UI |
 | `worker` | `CaptureWorker \| None` | Reference to active worker (for stopping) |
@@ -245,7 +245,7 @@ All persistent state lives in `st.session_state`. Never access these with `[]` w
 ## Known Limitations
 
 | Limitation | Impact | Workaround |
-|---|---|---|
+| --- | --- | --- |
 | Streamlit reruns entire script on interaction | Brief UI flicker during rerun | Acceptable for prototype; use `st.fragment` in Streamlit ≥ 1.37 for partial reruns |
 | Thread cannot write directly to session state | All UI updates happen via queue drain at rerun time | By design — queue pattern is correct approach |
 | `POLL_INTERVAL` controls both capture rate and UI refresh | Reducing it increases CPU usage | Keep at 0.5s for fake mode; tune for real capture based on traffic volume |
