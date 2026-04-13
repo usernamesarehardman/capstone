@@ -41,9 +41,11 @@
 2. Set `DATA_SOURCE = "real"` in `dashboard.py`.
 3. Confirm Tor is running: `sudo systemctl status tor`
 4. Grant scapy raw socket access (one-time):
+
    ```bash
    sudo setcap cap_net_raw+eip $(readlink -f .venv/bin/python)
    ```
+
 5. Launch: `streamlit run dashboard.py`
 
 ---

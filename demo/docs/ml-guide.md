@@ -62,6 +62,7 @@ The model uses a **56-element** feature vector extracted by `extract_features.py
 ## Dashboard Integration
 
 `dashboard.py` (`RealDataSource`) loads these three files at startup:
+
 - `model.joblib`
 - `scaler.joblib`
 - `label_map.json`

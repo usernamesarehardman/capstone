@@ -5,22 +5,22 @@ Reference links provided for the capstone. Safe to keep in a public repository.
 ## Reference code (GitHub)
 
 - **Data collection**  
-  https://github.com/SmartHomePrivacyProject/DeepVCFingerprinting/tree/master/collection_tool
+  <https://github.com/SmartHomePrivacyProject/DeepVCFingerprinting/tree/master/collection_tool>
 
 - **PCAP to CSV conversion**  
-  - https://github.com/SmartHomePrivacyProject/DeepVCFingerprinting/tree/master/preprocess  
-  - https://github.com/SmartHomePrivacyProject/VCFingerprinting/tree/master/pcap2csv
+  - <https://github.com/SmartHomePrivacyProject/DeepVCFingerprinting/tree/master/preprocess>  
+  - <https://github.com/SmartHomePrivacyProject/VCFingerprinting/tree/master/pcap2csv>
 
 - **Feature extraction and model training**  
-  https://github.com/SmartHomePrivacyProject/VCFingerprinting/tree/master/vcfp_attack
+  <https://github.com/SmartHomePrivacyProject/VCFingerprinting/tree/master/vcfp_attack>
 
 - **Defense (e.g. BuFLO-style)**  
-  https://github.com/SmartHomePrivacyProject/VCFingerprinting/tree/master/BuFLO_defense
+  <https://github.com/SmartHomePrivacyProject/VCFingerprinting/tree/master/BuFLO_defense>
 
 ## Public datasets and libraries
 
 - **Website Fingerprinting Library (datasets and tools)**  
-  https://github.com/Xinhao-Deng/Website-Fingerprinting-Library
+  <https://github.com/Xinhao-Deng/Website-Fingerprinting-Library>
 
 ## Other references
 

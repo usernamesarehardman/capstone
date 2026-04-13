@@ -4,7 +4,8 @@
 
 ## Prerequisites
 
-**Tor**
+Tor
+
 ```bash
 sudo apt install tor
 sudo systemctl start tor
@@ -12,6 +13,7 @@ sudo systemctl status tor   # confirm it's running
 ```
 
 **Python dependencies** (from demo/ with venv active):
+
 ```bash
 pip install -r requirements.txt
 ```
@@ -21,7 +23,8 @@ pip install -r requirements.txt
 ## Enable Tor Identity Rotation (optional but recommended for demo)
 
 Add to `/etc/tor/torrc`:
-```
+
+```text
 ControlPort 9051
 CookieAuthentication 1
 ```
@@ -39,7 +42,8 @@ python defense_proxy.py
 ```
 
 Expected startup output:
-```
+
+```text
 =======================================================
   WF-Guard Defense Proxy
 =======================================================
@@ -63,7 +67,7 @@ Type `D` + Enter in the proxy terminal to toggle defense on/off:
 | Defense ON (default) | Randomized headers, jittered timing, cover traffic active |
 | Defense OFF | Fixed User-Agent, no delay, cover traffic paused |
 
-```
+```text
 [DEFENSE OFF] Anti-fingerprinting disabled.
 [DEFENSE ON]  Anti-fingerprinting enabled.
 ```
@@ -98,13 +102,15 @@ python evaluate.py
 ```
 
 Runs 5 URLs × 3 times with defense ON, then OFF. Outputs:
+
 - Total bytes ON vs OFF (bandwidth overhead)
 - Average latency ON vs OFF
 - Success rate
 - Saves `evaluation_results.txt`
 
 Bandwidth overhead formula (from rubric):
-```
+
+```text
 Overhead = Total Bytes ON / Total Bytes OFF
 ```
 
@@ -113,6 +119,7 @@ Overhead = Total Bytes ON / Total Bytes OFF
 ## Troubleshooting
 
 **`Could not connect through Tor`**
+
 ```bash
 sudo systemctl start tor
 sudo systemctl status tor
@@ -125,7 +132,8 @@ delays — all features work normally.
 **Identity rotation failing**
 Confirm `ControlPort 9051` is in `/etc/tor/torrc` and Tor was restarted.
 
-**Scapy permission errors**
+Scapy permission errors
+
 ```bash
 sudo setcap cap_net_raw+eip $(readlink -f .venv/bin/python)
 ```
