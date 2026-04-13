@@ -25,8 +25,8 @@ def find_dataset(filename="curated_raw_dataset.csv"):
     if os.path.exists(local):
         return local
 
-    # 2. Machine Learning Engineer directory (one level up)
-    repo_root = os.path.dirname(here)
+    # 2. Machine Learning Engineer directory (two levels up: scripts/ → demo/ → capstone/)
+    repo_root = os.path.dirname(os.path.dirname(here))
     ml_dir = os.path.join(repo_root, "Machine Learning Engineer", filename)
     if os.path.exists(ml_dir):
         return ml_dir
