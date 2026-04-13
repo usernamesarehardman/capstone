@@ -103,7 +103,7 @@ log = logging.getLogger("defense_proxy")
 
 
 # ---------------------------------------------------------------------------
-# Kill Switch — toggle defense on/off at runtime
+# Defense state — controlled exclusively by the dashboard UI toggle
 # ---------------------------------------------------------------------------
 
 _defense_enabled = threading.Event()
@@ -111,51 +111,6 @@ _defense_enabled.set()   # Defense ON by default
 
 def is_defense_enabled() -> bool:
     return _defense_enabled.is_set()
-
-def _kill_switch_listener():
-    """
-    Background daemon thread: type 'D' + Enter to toggle defense ON/OFF.
-    On Linux/WSL the msvcrt import fails and the stdin fallback activates.
-    """
-    try:
-        import msvcrt
-        print("[*] Kill switch active — press 'D' to toggle defense ON/OFF.")
-        while True:
-            if msvcrt.kbhit():
-                key = msvcrt.getch().decode(errors="ignore").upper()
-                if key == "D":
-                    if _defense_enabled.is_set():
-                        _defense_enabled.clear()
-                        print("\n[DEFENSE OFF] Anti-fingerprinting disabled.")
-                        log.info("Defense DISABLED via kill switch.")
-                    else:
-                        _defense_enabled.set()
-                        print("\n[DEFENSE ON]  Anti-fingerprinting enabled.")
-                        log.info("Defense ENABLED via kill switch.")
-            time.sleep(0.05)
-    except (ImportError, UnicodeDecodeError):
-        # Linux/WSL: type D + Enter
-        print("[*] Kill switch active — type 'D' + Enter to toggle defense ON/OFF.")
-        while True:
-            try:
-                line = input().strip().upper()
-                if line == "D":
-                    if _defense_enabled.is_set():
-                        _defense_enabled.clear()
-                        print("[DEFENSE OFF] Anti-fingerprinting disabled.")
-                        log.info("Defense DISABLED via kill switch.")
-                    else:
-                        _defense_enabled.set()
-                        print("[DEFENSE ON]  Anti-fingerprinting enabled.")
-                        log.info("Defense ENABLED via kill switch.")
-            except EOFError:
-                break
-
-def start_kill_switch():
-    """Spawn the kill switch listener as a background daemon thread."""
-    t = threading.Thread(target=_kill_switch_listener, daemon=True, name="kill-switch")
-    t.start()
-    return t
 
 
 # ---------------------------------------------------------------------------
@@ -360,10 +315,9 @@ def check_tor_ip() -> str | None:
 
 if __name__ == "__main__":
     print("=" * 55)
-    print("  WF-Guard Defense Proxy")
+    print("  WF-Guard Defense Proxy — Tor Connectivity Check")
+    print("  Defense state is controlled by the dashboard UI.")
     print("=" * 55)
-
-    start_kill_switch()
 
     if init_dataset_manager("data"):
         print("[+] Traffic profile loaded — using learned delays.")
@@ -376,7 +330,7 @@ if __name__ == "__main__":
     exit_ip = check_tor_ip()
     if not exit_ip:
         print("\n[!] Could not connect through Tor.")
-        print("    Start Tor:  sudo systemctl start tor")
+        print("    Start Tor:  sudo service tor start   (or: tor &)")
         raise SystemExit(1)
 
     print(f"\n[+] Routing through Tor exit node: {exit_ip}")
