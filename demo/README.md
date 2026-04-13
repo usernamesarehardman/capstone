@@ -22,13 +22,24 @@ Once the `.venv` is activated, `python` also works inside the venv.
 
 ### Tor
 
-WSL does not run `systemd` by default, so `systemctl` will not work.
-Use `service` instead:
+Install Tor first, then start it. WSL's service management varies by version —
+use the first command that works for your setup:
 
 ```bash
 sudo apt install tor
+
+# Option 1 — SysV init (most WSL installs)
 sudo service tor start
-sudo service tor status    # confirm it is running
+
+# Option 2 — run directly (always works, no service management needed)
+tor &
+```
+
+Confirm Tor is routing before proceeding:
+
+```bash
+curl --socks5-hostname 127.0.0.1:9050 https://api.ipify.org
+# Should return a Tor exit IP, not your real IP
 ```
 
 To enable identity rotation add to `/etc/tor/torrc`:
@@ -38,7 +49,7 @@ ControlPort 9051
 CookieAuthentication 1
 ```
 
-Then `sudo service tor restart`.
+Then restart: `sudo service tor restart` or kill and re-run `tor &`.
 
 ### Python venv
 

@@ -10,12 +10,23 @@
 sudo apt install python3 python3-venv python-is-python3
 ```
 
-**Tor** — `systemctl` does not work on WSL without systemd; use `service`:
+**Tor** — install first, then start with whichever method works on your WSL:
 
 ```bash
 sudo apt install tor
+
+# Option 1 — SysV init (most WSL installs)
 sudo service tor start
-sudo service tor status    # confirm it is running
+
+# Option 2 — run directly (always works, bypasses service management entirely)
+tor &
+```
+
+Verify Tor is routing before proceeding:
+
+```bash
+curl --socks5-hostname 127.0.0.1:9050 https://api.ipify.org
+# Should return a Tor exit IP, not your real IP
 ```
 
 **Python dependencies** (from `demo/` with venv active):
@@ -134,11 +145,21 @@ Overhead = Total Bytes ON / Total Bytes OFF
 
 **`Failed to start tor.service: Unit tor.service not found`**
 
-`systemctl` requires systemd, which WSL does not run by default. Use `service`:
+Two possible causes:
 
-```bash
-sudo service tor start
-```
+1. Tor is not installed — install it first:
+   ```bash
+   sudo apt install tor
+   sudo service tor start
+   ```
+
+2. Tor is installed but service management is broken on this WSL instance —
+   bypass it entirely by running Tor directly:
+   ```bash
+   tor &
+   ```
+   Tor will start in the background and listen on `127.0.0.1:9050`.
+   Verify with: `curl --socks5-hostname 127.0.0.1:9050 https://api.ipify.org`
 
 **`python: command not found`**
 
