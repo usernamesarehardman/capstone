@@ -1,93 +1,127 @@
 # WF-Guard — Live Demo Environment
 
-Unified pipeline for the WF-Guard capstone demo. All components live in this
-directory: traffic sniffer, feature extractor, ML classifier, defense proxy,
-and real-time dashboard.
+Unified pipeline for the WF-Guard capstone demo. All runnable components
+live in `scripts/`: traffic sniffer, feature extractor, ML classifier,
+defense proxy, and real-time dashboard.
 
 ---
 
 ## Prerequisites
 
-**Tor** (WSL/Linux)
+### Python
+
+Fresh WSL Ubuntu does not ship a `python` binary. Install it once:
+
 ```bash
-sudo apt install tor
-sudo systemctl start tor
+sudo apt update
+sudo apt install python3 python3-venv python-is-python3
 ```
 
-Optionally enable identity rotation — add to `/etc/tor/torrc`:
+`python-is-python3` creates the `python` → `python3` symlink system-wide.
+Once the `.venv` is activated, `python` also works inside the venv.
+
+### Tor
+
+WSL does not run `systemd` by default, so `systemctl` will not work.
+Use `service` instead:
+
+```bash
+sudo apt install tor
+sudo service tor start
+sudo service tor status    # confirm it is running
+```
+
+To enable identity rotation add to `/etc/tor/torrc`:
+
 ```
 ControlPort 9051
 CookieAuthentication 1
 ```
-Then `sudo systemctl restart tor`.
 
-**Python venv** (already created)
+Then `sudo service tor restart`.
+
+### Python venv
+
 ```bash
+# From demo/
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-**Scapy raw socket access** (one-time setup)
+### Scapy raw socket access (one-time)
+
+Grants packet capture without running streamlit as root:
+
 ```bash
 sudo setcap cap_net_raw+eip $(readlink -f .venv/bin/python)
 ```
-This lets the venv Python sniff packets without running streamlit as root.
 
 ---
 
 ## Step 1 — Train the model
 
-Requires `curated_raw_dataset.csv`. The script will find it automatically if
-the repo structure is intact; otherwise copy it into `demo/`.
+Run from `demo/scripts/` with the venv active. The script searches for
+`curated_raw_dataset.csv` in `scripts/`, `Machine Learning Engineer/`, and
+`Data & Traffic Engineer/initial_dataset/` automatically.
 
 ```bash
+cd scripts
 python evaluate_models.py
 ```
 
-Outputs `model.joblib`, `scaler.joblib`, and `label_map.json` into this directory.
+Outputs into `demo/scripts/`:
+- `model.joblib`
+- `scaler.joblib`
+- `label_map.json`
 
 ---
 
-## Step 2 — Run the defense proxy (optional, separate terminal)
+## Step 2 — Run the defense proxy (separate terminal, optional)
 
 ```bash
+cd scripts
 python defense_proxy.py
 ```
 
-This routes traffic through Tor with cover traffic and header randomization.
-Press `D` + Enter to toggle defense on/off. The dashboard's defense toggle
-is independent — both can be used together for the demo.
+Type `D` + Enter to toggle defense on/off. This process is independent of
+the dashboard — run both simultaneously for the full demo effect.
 
 ---
 
 ## Step 3 — Launch the dashboard
 
-**Fake data mode** (no Tor required, good for UI testing):
+**Fake data mode** (no Tor required, good for UI verification):
+
 ```bash
-# DATA_SOURCE = "fake" in dashboard.py (default)
+# DATA_SOURCE = "fake" in scripts/dashboard.py (default)
+cd scripts
 streamlit run dashboard.py
 ```
 
 **Real data mode** (live Tor traffic):
+
 ```bash
-# Set DATA_SOURCE = "real" in dashboard.py first
+# Set DATA_SOURCE = "real" in scripts/dashboard.py first
+# Ensure Tor is running: sudo service tor start
+cd scripts
 streamlit run dashboard.py
 ```
 
-Open `http://localhost:8501`, click **▶ Start**, and browse through Tor Browser
-or any Tor-routed application. The dashboard will predict the site from live
-traffic and show confidence drop when the WF-Guard toggle is enabled.
+Open `http://localhost:8501`, click **▶ Start**, then browse through Tor.
+The dashboard predicts the current site from live traffic and shows
+confidence drop when the WF-Guard toggle is enabled.
 
 ---
 
-## Step 4 — Run the Phase 5 evaluation
+## Step 4 — Phase 5 evaluation
 
 ```bash
+cd scripts
 python evaluate.py
 ```
 
-Benchmarks bandwidth and latency overhead with defense ON vs OFF. Outputs a
-report to the terminal and saves `evaluation_results.txt`.
+Benchmarks bandwidth and latency overhead with defense ON vs OFF. Saves
+`evaluation_results.txt` in `demo/scripts/`.
 
 ---
 
@@ -95,19 +129,21 @@ report to the terminal and saves `evaluation_results.txt`.
 
 ```
 demo/
-├── dashboard.py          ← Streamlit real-time UI
-├── defense_proxy.py      ← Tor SOCKS5 proxy with anti-fingerprinting
-├── dataset_manager.py    ← pcap ingestion + traffic profiling
-├── extract_features.py   ← scapy packets → model vector + display dict
-├── evaluate_models.py    ← RandomForest training + artifact export
-├── evaluate.py           ← Phase 5 bandwidth/latency evaluation
+├── .gitignore
+├── README.md
 ├── requirements.txt
-├── data/                 ← drop .pcap files here for learned timing
-├── models/               ← auto-created by dataset_manager.py
-└── docs/
-    ├── defense.md        ← defense proxy setup and kill switch guide
-    ├── dashboard.md      ← dashboard architecture and integration guide
-    └── ml-guide.md       ← model training and artifact reference
+├── docs/
+│   ├── dashboard.md      dashboard architecture + integration guide
+│   ├── defense.md        defense proxy setup and kill switch reference
+│   └── ml-guide.md       model training and artifact reference
+└── scripts/
+    ├── dashboard.py
+    ├── defense_proxy.py
+    ├── dataset_manager.py
+    ├── extract_features.py
+    ├── evaluate_models.py
+    ├── evaluate.py
+    └── data/             drop .pcap files here for learned timing
 ```
 
 ---
@@ -118,4 +154,4 @@ demo/
 | --- | --- |
 | `9050` | Tor daemon SOCKS5 (default in this demo) |
 | `9051` | Tor control port (identity rotation) |
-| `9150` | Tor Browser SOCKS5 (change `TOR_PORT` in dashboard.py if using Tor Browser) |
+| `9150` | Tor Browser SOCKS5 — change `TOR_PORT` in `dashboard.py` if using Tor Browser |

@@ -23,7 +23,7 @@
 
 ---
 
-## Key Configuration (top of dashboard.py)
+## Key Configuration (top of scripts/dashboard.py)
 
 | Variable | Default | Description |
 | --- | --- | --- |
@@ -31,22 +31,31 @@
 | `TOR_PORT` | `9050` | Tor daemon port on Linux/WSL (use `9150` for Tor Browser) |
 | `WINDOW_SIZE` | `100` | Packets captured per inference window |
 | `POLL_INTERVAL` | `0.5` | Seconds between UI refresh cycles |
-| `MODEL_DIR` | script directory | Where `model.joblib`, `scaler.joblib`, `label_map.json` are loaded from |
+| `MODEL_DIR` | `scripts/` directory | Where `model.joblib`, `scaler.joblib`, `label_map.json` are loaded from |
 
 ---
 
 ## Switching to Real Data
 
-1. Run `python evaluate_models.py` to generate model artifacts.
-2. Set `DATA_SOURCE = "real"` in `dashboard.py`.
-3. Confirm Tor is running: `sudo systemctl status tor`
-4. Grant scapy raw socket access (one-time):
+1. Run `python evaluate_models.py` from `demo/scripts/` to generate model artifacts.
+2. Set `DATA_SOURCE = "real"` in `scripts/dashboard.py`.
+3. Confirm Tor is running:
+
+   ```bash
+   sudo service tor status
+   ```
+
+4. Grant scapy raw socket access (one-time, run from `demo/`):
 
    ```bash
    sudo setcap cap_net_raw+eip $(readlink -f .venv/bin/python)
    ```
 
-5. Launch: `streamlit run dashboard.py`
+5. Launch from `demo/scripts/`:
+
+   ```bash
+   streamlit run dashboard.py
+   ```
 
 ---
 
@@ -55,7 +64,7 @@
 `RealDataSource.get_next_result()` does the following on each inference cycle:
 
 1. Sniffs `WINDOW_SIZE` TCP packets on `TOR_PORT` via `scapy.AsyncSniffer` (15s timeout)
-2. Calls `extract_features(packets)` → `(model_vector [56], display_dict [14 keys])`
+2. Calls `extract_features(packets)` → `(model_vector [56 elements], display_dict [14 keys])`
 3. Scales the model vector with the loaded `StandardScaler`
 4. Runs `model.predict_proba()` → probability distribution over all 40 site classes
 5. Returns `InferenceResult` with prediction, confidence, probabilities, and display features
@@ -80,7 +89,7 @@
 ## Feature Alignment
 
 The dashboard displays a 14-key human-readable dict (`display_dict`) from `extract_features.py`.
-The model receives a separate 56-element vector. These are computed simultaneously by
+The model receives a separate 56-element vector. Both are computed simultaneously by
 `extract_features(packets)` which returns `(model_vector, display_dict)`.
 
 The 14 display features (`FEATURE_NAMES` in `dashboard.py`):
@@ -98,5 +107,5 @@ The 14 display features (`FEATURE_NAMES` in `dashboard.py`):
 | Streamlit reruns entire script on interaction | Brief UI flicker | Use `st.fragment` in Streamlit ≥ 1.37 for partial reruns |
 | Thread cannot write directly to session state | Updates happen at rerun time | By design — queue pattern is correct |
 | `POLL_INTERVAL` controls both capture rate and UI refresh | Reducing increases CPU | Keep at 0.5s; tune for real traffic volume |
-| Real capture requires raw socket access | Deployment friction | Use `setcap` on the venv Python binary |
+| Real capture requires raw socket access | Must grant `setcap` or run as root | `sudo setcap cap_net_raw+eip $(readlink -f .venv/bin/python)` |
 | Site list in fake mode is hardcoded (8 sites) | Fake predictions only cover 8 classes | Real mode uses `label_map.json` (40 classes) automatically |

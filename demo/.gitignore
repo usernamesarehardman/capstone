@@ -5,7 +5,7 @@ __pycache__/
 *.pyo
 *.pyd
 
-# Generated model artifacts — run evaluate_models.py to regenerate
+# Generated model artifacts — run scripts/evaluate_models.py to regenerate
 model.joblib
 scaler.joblib
 label_map.json
@@ -13,11 +13,11 @@ confusion_matrix.csv
 confusion_heatmap.png
 
 # Defense proxy trained models
-models/
+scripts/models/
 
 # pcap data (too large for git)
-data/*.pcap
-data/*.pcapng
+*.pcap
+*.pcapng
 
 # Evaluation output
 evaluation_results.txt

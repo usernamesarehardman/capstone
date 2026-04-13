@@ -4,17 +4,24 @@
 
 ## Prerequisites
 
-Tor
+**Python** — fresh WSL Ubuntu does not have a `python` binary:
+
+```bash
+sudo apt install python3 python3-venv python-is-python3
+```
+
+**Tor** — `systemctl` does not work on WSL without systemd; use `service`:
 
 ```bash
 sudo apt install tor
-sudo systemctl start tor
-sudo systemctl status tor   # confirm it's running
+sudo service tor start
+sudo service tor status    # confirm it is running
 ```
 
-**Python dependencies** (from demo/ with venv active):
+**Python dependencies** (from `demo/` with venv active):
 
 ```bash
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
@@ -30,7 +37,7 @@ CookieAuthentication 1
 ```
 
 ```bash
-sudo systemctl restart tor
+sudo service tor restart
 ```
 
 ---
@@ -38,6 +45,7 @@ sudo systemctl restart tor
 ## Running the Proxy
 
 ```bash
+cd demo/scripts
 python defense_proxy.py
 ```
 
@@ -54,7 +62,12 @@ Expected startup output:
 [+] Session User-Agent: Mozilla/5.0 ...
 ```
 
-If you see `Could not connect through Tor` — run `sudo systemctl start tor` and retry.
+If you see `Could not connect through Tor`:
+
+```bash
+sudo service tor start
+sudo service tor status
+```
 
 ---
 
@@ -77,8 +90,8 @@ Type `D` + Enter in the proxy terminal to toggle defense on/off:
 ## Cover Traffic
 
 When defense is ON, a background thread sends randomized HEAD requests to 8
-public sites through Tor. This injects dummy traffic to obscure the real
-request pattern. Cover traffic pauses automatically when defense is toggled OFF.
+public sites through Tor to inject dummy traffic and obscure real request
+patterns. Cover traffic pauses automatically when defense is toggled OFF.
 
 ---
 
@@ -98,6 +111,7 @@ The returned IP must differ from your real IP. If they match, Tor is not routing
 ## Phase 5 Evaluation (Bandwidth / Latency)
 
 ```bash
+cd demo/scripts
 python evaluate.py
 ```
 
@@ -118,21 +132,33 @@ Overhead = Total Bytes ON / Total Bytes OFF
 
 ## Troubleshooting
 
-**`Could not connect through Tor`**
+**`Failed to start tor.service: Unit tor.service not found`**
+
+`systemctl` requires systemd, which WSL does not run by default. Use `service`:
 
 ```bash
-sudo systemctl start tor
-sudo systemctl status tor
+sudo service tor start
 ```
 
+**`python: command not found`**
+
+```bash
+sudo apt install python-is-python3
+```
+
+Or activate the venv — `python` is always available inside `.venv/bin/`.
+
 **`dataset_manager` import warning**
-Expected if no pcap files are in `data/`. The proxy falls back to random
-delays — all features work normally.
+
+Expected if no pcap files are in `scripts/data/`. The proxy falls back to
+random delays — all features work normally.
 
 **Identity rotation failing**
-Confirm `ControlPort 9051` is in `/etc/tor/torrc` and Tor was restarted.
 
-Scapy permission errors
+Confirm `ControlPort 9051` is in `/etc/tor/torrc` and Tor was restarted
+with `sudo service tor restart`.
+
+**Scapy permission errors**
 
 ```bash
 sudo setcap cap_net_raw+eip $(readlink -f .venv/bin/python)

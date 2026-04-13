@@ -39,8 +39,9 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 # Config
 # ---------------------------------------------------------------------------
 
-DATA_DIR   = Path("data")          # Drop pcap files here
-MODEL_DIR  = Path("models")        # Saved model artifacts
+_HERE      = Path(__file__).parent
+DATA_DIR   = _HERE / "data"        # Drop pcap files here
+MODEL_DIR  = _HERE / "models"      # Saved model artifacts
 DATA_DIR.mkdir(exist_ok=True)
 MODEL_DIR.mkdir(exist_ok=True)
 
