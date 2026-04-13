@@ -18,8 +18,8 @@ Then open `http://localhost:8501` in your browser.
 
 ## Project Structure
 
-```
-dashboard.py        ← Single-file Streamlit app (this is the whole thing)
+```md
+dashboard.py        ← Single-file Streamlit app
 README.md           ← This file
 DOCUMENTATION.md    ← Architecture, integration guide, and API
 ```
@@ -31,7 +31,7 @@ DOCUMENTATION.md    ← Architecture, integration guide, and API
 At the top of `dashboard.py`:
 
 | Variable | Default | Description |
-|---|---|---|
+| --- | --- | --- |
 | `DATA_SOURCE` | `"fake"` | `"fake"` for simulated data, `"real"` for live capture |
 | `TOR_PORT` | `9150` | Port to sniff for Tor client traffic |
 | `WINDOW_SIZE` | `100` | Packets per feature extraction window |
@@ -51,7 +51,7 @@ At the top of `dashboard.py`:
 ## Controls
 
 | Control | Description |
-|---|---|
+| --- | --- |
 | **▶ Start** | Launches the background capture/inference worker thread |
 | **⏹ Stop** | Gracefully stops the worker thread |
 | **WF-Guard Toggle** | Simulates defense mode — flattens classifier confidence |
@@ -66,6 +66,7 @@ At the top of `dashboard.py`:
 - `numpy`
 
 For real data mode, additionally:
+
 - `scapy`
 - `scikit-learn` or your model's framework (PyTorch, etc.)
 - Root/sudo access for packet capture
