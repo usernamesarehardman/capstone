@@ -1,0 +1,26 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Generated model artifacts — run evaluate_models.py to regenerate
+model.joblib
+scaler.joblib
+label_map.json
+confusion_matrix.csv
+confusion_heatmap.png
+
+# Defense proxy trained models
+models/
+
+# pcap data (too large for git)
+data/*.pcap
+data/*.pcapng
+
+# Evaluation output
+evaluation_results.txt
+
+# Streamlit cache
+.streamlit/
