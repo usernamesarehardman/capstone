@@ -15,6 +15,7 @@ models/
 # CW.npz (~500 MB) — download from https://zenodo.org/records/13732130
 data/*.npz
 data/*.gz
+data/*.csv
 
 # ── Collected training data ────────────────────────────────────────────────────
 # Regenerate with: python scripts/collect/collect_fresh.py
