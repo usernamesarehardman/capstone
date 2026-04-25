@@ -107,7 +107,7 @@ def load_sites(demo_only: bool = False):
     """Load site list from label_map.json in label-index order.
     Pass demo_only=True to restrict to high-recall sites for cleaner demos."""
     here = os.path.dirname(os.path.abspath(__file__))
-    with open(os.path.join(here, "label_map.json")) as f:
+    with open(os.path.join(here, "..", "models", "label_map.json")) as f:
         lmap = json.load(f)
     sites = []
     for i in range(len(lmap)):
