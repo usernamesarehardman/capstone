@@ -1,26 +1,39 @@
-# Python
+# ── Python ────────────────────────────────────────────────────────────────────
 .venv/
 __pycache__/
-*.pyc
+*.py[cod]
 *.pyo
 *.pyd
+*.egg-info/
 
-# Generated model artifacts — run scripts/evaluate_models.py to regenerate
-model.joblib
-scaler.joblib
-label_map.json
-confusion_matrix.csv
-confusion_heatmap.png
+# ── Model artifacts ────────────────────────────────────────────────────────────
+# Regenerate with: python scripts/evaluate_models.py
+# Saved to demo/models/ by default
+models/
 
-# Defense proxy trained models
+# ── Large public datasets ──────────────────────────────────────────────────────
+# CW.npz (~500 MB) — download from https://zenodo.org/records/13732130
+data/*.npz
+data/*.gz
+
+# ── Collected training data ────────────────────────────────────────────────────
+# Regenerate with: python scripts/collect/collect_fresh.py
+scripts/collect/dataset.csv
+scripts/collect/collection.log
+
+# ── Runtime output ─────────────────────────────────────────────────────────────
+# Inference log written by dashboard.py — kept out of git, analyze with analyze_log.py
+logs/inference_log.jsonl
+scripts/evaluation_results.txt
+
+# ── Defense proxy model cache ──────────────────────────────────────────────────
+# Trained by dataset_manager.py from local pcap files
 scripts/models/
 
-# pcap data (too large for git)
+# ── Packet captures ────────────────────────────────────────────────────────────
 *.pcap
 *.pcapng
+scripts/data/
 
-# Evaluation output
-evaluation_results.txt
-
-# Streamlit cache
+# ── Streamlit ─────────────────────────────────────────────────────────────────
 .streamlit/

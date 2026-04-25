@@ -1,5 +1,0 @@
-## Here is a list of Requirements for the defense_proxy.py script.
-pip install requests[socks] PySocks fake-useragent
-# Make sure Tor is running first
-tor   # or: sudo systemctl start tor
-python defense_proxy.py

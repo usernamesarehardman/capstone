@@ -1,17 +1,29 @@
 """
 WF-Guard: Real-Time Website Fingerprinting Dashboard
 =====================================================
+Streamlit dashboard for live website fingerprinting demonstration.
+
 Architecture:
-  - FakeDataSource: simulated traffic + fake classifier (no Tor needed)
-  - RealDataSource: live scapy capture on loopback + trained RandomForest
+  - FakeDataSource: simulated traffic + heuristic classifier (no Tor needed)
+  - RealDataSource: live scapy capture on eth0 + trained RandomForest
   - CaptureWorker: background thread pushing InferenceResults to a queue
   - Streamlit UI: sole control surface — data source, defense, start/stop
 
 Defense state is controlled exclusively by the sidebar toggle.
 Cover traffic is started/stopped with the worker.
-No kill switch, no file edits required during the demo.
+
+Usage:
+    streamlit run dashboard.py
+    streamlit run dashboard.py -- --source real
+    streamlit run dashboard.py -- --source fake
+
+Options (passed after --):
+    --source fake|real   Default data source on load (default: fake).
+                         Can be overridden in the sidebar at any time.
 """
 
+import argparse
+import json
 import os
 import sys
 import streamlit as st
@@ -28,23 +40,24 @@ from typing import Optional
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from defense_proxy import _defense_enabled, start_cover_traffic, stop_cover_traffic
 
+# parse_known_args so Streamlit's own argv entries don't cause errors
+_parser = argparse.ArgumentParser(add_help=False)
+_parser.add_argument("--source", choices=["fake", "real"], default="fake",
+                     help="Default data source (fake or real).")
+_CLI, _ = _parser.parse_known_args()
+
 # ── CONFIG ──────────────────────────────────────────────────────────────────
 TOR_PORT      = 9050      # Tor daemon on Linux/WSL (9150 for Tor Browser)
-WINDOW_SIZE   = 100       # packets per feature window
+WINDOW_SIZE   = 750       # packets per feature window (matches training median ~736)
 POLL_INTERVAL = 0.5       # seconds between UI refresh
-SNIFF_IFACE   = "lo"      # WSL: SOCKS5 traffic flows through loopback
-MODEL_DIR     = os.path.dirname(os.path.abspath(__file__))
+SNIFF_IFACE   = "eth0"    # Tor circuit traffic exits on eth0 (matches training data)
 
-MONITORED_SITES = [
-    "google.com",
-    "youtube.com",
-    "facebook.com",
-    "amazon.com",
-    "wikipedia.org",
-    "twitter.com",
-    "reddit.com",
-    "github.com",
-]
+_SCRIPTS_DIR       = os.path.dirname(os.path.abspath(__file__))
+_DEMO_DIR          = os.path.dirname(_SCRIPTS_DIR)
+MODEL_DIR          = os.path.join(_DEMO_DIR, "models")   # demo/models/
+GROUND_TRUTH_FILE  = "/tmp/wfguard_gt.txt"
+LOG_FILE           = os.path.join(_DEMO_DIR, "logs", "inference_log.jsonl")
+os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)     # ensure demo/logs/ exists
 
 # ── DATA STRUCTURES ──────────────────────────────────────────────────────────
 @dataclass
@@ -56,6 +69,9 @@ class InferenceResult:
     packets_in_window: int
     features: dict
     defense_active: bool
+    ground_truth: Optional[str] = None
+    capture_s: Optional[float] = None    # seconds spent capturing the packet window
+    latency_ms: Optional[float] = None   # milliseconds from features-ready to prediction
 
 @dataclass
 class PacketRecord:
@@ -77,30 +93,40 @@ FEATURE_NAMES = [
 
 # ── FAKE DATA SOURCE ─────────────────────────────────────────────────────────
 class FakeDataSource:
-    SITE_PROFILES = {
-        "google.com":    dict(mean_size=800,  std_size=300, incoming_bias=0.6),
-        "youtube.com":   dict(mean_size=1400, std_size=200, incoming_bias=0.85),
-        "facebook.com":  dict(mean_size=900,  std_size=400, incoming_bias=0.65),
-        "amazon.com":    dict(mean_size=1100, std_size=350, incoming_bias=0.7),
-        "wikipedia.org": dict(mean_size=1300, std_size=150, incoming_bias=0.75),
-        "twitter.com":   dict(mean_size=700,  std_size=250, incoming_bias=0.55),
-        "reddit.com":    dict(mean_size=1000, std_size=300, incoming_bias=0.68),
-        "github.com":    dict(mean_size=950,  std_size=280, incoming_bias=0.60),
-    }
+    """
+    Simulated traffic source — no Tor required.
+    Mirrors RealDataSource init: loads label_map.json to drive the site list,
+    then generates synthetic packet windows and a heuristic classifier.
+    """
 
     def __init__(self, defense_active_fn):
         self.defense_active_fn = defense_active_fn
-        self.current_site = random.choice(MONITORED_SITES)
+        import json
+        with open(os.path.join(MODEL_DIR, "label_map.json")) as f:
+            lmap = json.load(f)
+        self.labels = [lmap[str(i)] for i in range(len(lmap))]
+        self._profiles = {site: self._make_profile(site) for site in self.labels}
+        self.current_site = random.choice(self.labels)
         self._counter = 0
+
+    @staticmethod
+    def _make_profile(site: str) -> dict:
+        """Deterministic per-site traffic profile seeded from the site name."""
+        rng = random.Random(hash(site) & 0xFFFFFFFF)
+        return dict(
+            mean_size=rng.randint(400, 1400),
+            std_size=rng.randint(100, 450),
+            incoming_bias=round(rng.uniform(0.50, 0.88), 2),
+        )
 
     def _rotate_site(self):
         self._counter += 1
         if self._counter >= random.randint(8, 15):
-            self.current_site = random.choice(MONITORED_SITES)
+            self.current_site = random.choice(self.labels)
             self._counter = 0
 
     def _generate_window(self):
-        profile = self.SITE_PROFILES[self.current_site]
+        profile = self._profiles[self.current_site]
         packets, t = [], time.time()
         for _ in range(WINDOW_SIZE):
             direction = "incoming" if random.random() < profile["incoming_bias"] else "outgoing"
@@ -140,17 +166,22 @@ class FakeDataSource:
         }
 
     def _predict(self, features):
-        defense = bool(self.defense_active_fn())
+        # Use the thread-safe Event — st.session_state is not accessible
+        # from background worker threads (ScriptRunContext missing).
+        defense = _defense_enabled.is_set()
         if defense:
-            raw = {s: random.uniform(0.05, 0.25) for s in MONITORED_SITES}
+            # Defense on: uniform low-confidence scores across all sites —
+            # simulates the classifier being unable to fingerprint the traffic.
+            raw = {s: random.uniform(0.05, 0.25) for s in self.labels}
         else:
-            raw = {}
-            for site, p in self.SITE_PROFILES.items():
-                sm = 1.0 - min(abs(features["mean_packet_size"] - p["mean_size"]) / p["mean_size"], 1.0)
-                bm = 1.0 - abs(features["incoming_packets"] / features["total_packets"] - p["incoming_bias"])
-                raw[site] = (sm * 0.6 + bm * 0.4) + random.uniform(-0.1, 0.1)
-        total = sum(max(v, 0.01) for v in raw.values())
-        probs = {s: max(v, 0.01) / total for s, v in raw.items()}
+            # Defense off: simulate a well-trained classifier correctly
+            # identifying the current site with high confidence.
+            # Runner-up scores are kept very small so the current site
+            # normalizes to ~65–80% even with 40 competing labels.
+            raw = {s: random.uniform(0.002, 0.008) for s in self.labels}
+            raw[self.current_site] = random.uniform(0.60, 0.85)
+        total = sum(max(v, 0.001) for v in raw.values())
+        probs = {s: max(v, 0.001) / total for s, v in raw.items()}
         pred  = max(probs, key=probs.get)
         return pred, probs[pred], probs
 
@@ -162,7 +193,8 @@ class FakeDataSource:
         return InferenceResult(
             timestamp=time.time(), prediction=pred, confidence=conf,
             probabilities=probs, packets_in_window=len(packets),
-            features=features, defense_active=self.defense_active_fn(),
+            features=features, defense_active=_defense_enabled.is_set(),
+            ground_truth=self.current_site,
         )
 
 
@@ -186,27 +218,48 @@ class RealDataSource:
         from scapy.all import AsyncSniffer
         from extract_features import extract_features
 
+        t_capture_start = time.time()
         sniffer = AsyncSniffer(
             iface=SNIFF_IFACE,
-            filter=f"tcp port {TOR_PORT}",
+            filter="tcp",        # Tor circuit traffic on eth0 uses guard-node ports (443/9001), not 9050
             count=WINDOW_SIZE,
-            timeout=15,
+            timeout=60,
         )
         sniffer.start()
         sniffer.join()
+        capture_s = time.time() - t_capture_start
         packets = list(sniffer.results or [])
 
-        model_vec, display_dict = extract_features(packets)
-        scaled    = self.scaler.transform([model_vec])
-        probs_arr = self.model.predict_proba(scaled)[0]
+        if not packets:
+            raise RuntimeError(
+                f"No packets captured on '{SNIFF_IFACE}' (tcp port {TOR_PORT}, 15s timeout). "
+                "Run traffic_gen.py in a separate terminal to generate Tor traffic."
+            )
+
+        model_vec, display_dict = extract_features(packets, tor_port=TOR_PORT)
+        scaled = self.scaler.transform([model_vec])
+
+        t_inf_start = time.time()
+        probs_arr   = self.model.predict_proba(scaled)[0]
+        latency_ms  = (time.time() - t_inf_start) * 1000
+
         probs     = dict(zip(self.labels, probs_arr))
         prediction = max(probs, key=probs.get)
         confidence = probs[prediction]
+
+        ground_truth = None
+        try:
+            with open(GROUND_TRUTH_FILE) as f:
+                ground_truth = f.read().strip() or None
+        except OSError:
+            pass
 
         return InferenceResult(
             timestamp=time.time(), prediction=prediction, confidence=confidence,
             probabilities=probs, packets_in_window=len(packets),
             features=display_dict, defense_active=self.defense_active_fn(),
+            ground_truth=ground_truth, capture_s=round(capture_s, 3),
+            latency_ms=round(latency_ms, 2),
         )
 
 
@@ -240,15 +293,19 @@ class CaptureWorker:
 # ── SESSION STATE ─────────────────────────────────────────────────────────────
 def init_state():
     defaults = {
-        "running":        False,
-        "data_source":    "fake",
-        "result_queue":   queue.Queue(),
-        "worker":         None,
-        "logs":           ["[INIT] System ready. Select a mode and press Start."],
-        "total_packets":  0,
-        "accuracy_trend": [],
-        "last_result":    None,
-        "defense_active": False,
+        "running":            False,
+        "data_source":        _CLI.source,
+        "result_queue":       queue.Queue(),
+        "worker":             None,
+        "logs":               ["[INIT] System ready. Select a mode and press Start."],
+        "total_packets":      0,
+        "conf_trend":         [],   # list of {"Prediction Conf": float, "GT Conf": float|None}
+        "correct_count":      0,
+        "top3_correct_count": 0,
+        "gt_conf_sum":        0.0,
+        "inference_count":    0,
+        "last_result":        None,
+        "defense_active":     False,
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -315,9 +372,13 @@ stop_btn  = col_stop.button("⏹ Stop",  use_container_width=True)
 
 if start_btn and not st.session_state["running"]:
     src = st.session_state["data_source"]
-    st.session_state["result_queue"]   = queue.Queue()
-    st.session_state["accuracy_trend"] = []
-    st.session_state["total_packets"]  = 0
+    st.session_state["result_queue"]       = queue.Queue()
+    st.session_state["conf_trend"]         = []
+    st.session_state["correct_count"]      = 0
+    st.session_state["top3_correct_count"] = 0
+    st.session_state["gt_conf_sum"]        = 0.0
+    st.session_state["inference_count"]    = 0
+    st.session_state["total_packets"]      = 0
     st.session_state["logs"] = [
         f"[{time.strftime('%H:%M:%S')}] Started — source: {src.upper()}"
     ]
@@ -347,15 +408,76 @@ while not st.session_state["result_queue"].empty():
     if isinstance(item, Exception):
         st.session_state["logs"].append(f"[ERROR] {item}")
         continue
+
     latest_result = item
     st.session_state["last_result"]    = item
     st.session_state["total_packets"] += item.packets_in_window
-    st.session_state["accuracy_trend"].append(item.confidence)
-    ts  = time.strftime('%H:%M:%S', time.localtime(item.timestamp))
+
+    ts    = time.strftime('%H:%M:%S', time.localtime(item.timestamp))
     dflag = " [DEF ON]" if item.defense_active else ""
+
+    gt_rank = None
+    gt_conf = None
+    in_top3 = False
+    in_top5 = False
+
+    if item.ground_truth is not None:
+        sorted_probs = sorted(item.probabilities.items(), key=lambda x: -x[1])
+        # Rank of ground-truth class (1-based; len+1 if absent from label map)
+        gt_rank = next(
+            (i + 1 for i, (s, _) in enumerate(sorted_probs) if s == item.ground_truth),
+            len(sorted_probs) + 1,
+        )
+        gt_conf = item.probabilities.get(item.ground_truth, 0.0)
+        in_top3 = gt_rank <= 3
+        in_top5 = gt_rank <= 5
+        top3    = [[s, round(p, 4)] for s, p in sorted_probs[:3]]
+        correct = item.prediction == item.ground_truth
+
+        st.session_state["inference_count"]    += 1
+        st.session_state["gt_conf_sum"]        += gt_conf
+        if correct:
+            st.session_state["correct_count"]      += 1
+        if in_top3:
+            st.session_state["top3_correct_count"] += 1
+
+        result_flag = (
+            f" ✓ (gt_conf={gt_conf:.1%})" if correct
+            else f" ✗ (gt={item.ground_truth}, rank={gt_rank}, gt_conf={gt_conf:.1%})"
+        )
+
+        # Write structured log entry
+        log_entry = {
+            "ts":               item.timestamp,
+            "source":           st.session_state["data_source"],
+            "prediction":       item.prediction,
+            "confidence":       round(item.confidence, 4),
+            "ground_truth":     item.ground_truth,
+            "gt_rank":          gt_rank,
+            "gt_confidence":    round(gt_conf, 4),
+            "in_top3":          in_top3,
+            "in_top5":          in_top5,
+            "top3":             top3,
+            "defense_active":   item.defense_active,
+            "packets_in_window": item.packets_in_window,
+            "capture_s":        item.capture_s,
+            "latency_ms":       item.latency_ms,
+        }
+        try:
+            with open(LOG_FILE, "a") as _lf:
+                _lf.write(json.dumps(log_entry) + "\n")
+        except OSError:
+            pass  # non-fatal — dashboard keeps running if log write fails
+    else:
+        result_flag = ""
+
+    st.session_state["conf_trend"].append({
+        "Prediction Conf": item.confidence,
+        "GT Conf":         gt_conf,
+    })
     st.session_state["logs"].append(
-        f"[{ts}]{dflag} → {item.prediction} ({item.confidence:.1%})"
-        f" | pkts={item.packets_in_window} | bursts={item.features.get('burst_count','?')}"
+        f"[{ts}]{dflag} → {item.prediction} ({item.confidence:.1%}){result_flag}"
+        f" | pkts={item.packets_in_window}"
     )
 
 
@@ -368,17 +490,32 @@ st.caption(f"Source: **{src_label}** | {status}")
 # ── METRICS ───────────────────────────────────────────────────────────────────
 m1, m2, m3, m4 = st.columns(4)
 if latest_result:
+    n_inf  = st.session_state["inference_count"]
+    n_cor  = st.session_state["correct_count"]
+    n_top3 = st.session_state["top3_correct_count"]
+    gt_avg = (st.session_state["gt_conf_sum"] / n_inf) if n_inf > 0 else None
+    acc1_str  = f"{n_cor/n_inf:.1%} ({n_cor}/{n_inf})"   if n_inf > 0 else "—"
+    acc3_str  = f"{n_top3/n_inf:.1%} ({n_top3}/{n_inf})" if n_inf > 0 else "—"
+    gtc_str   = f"{gt_avg:.1%}" if gt_avg is not None else "—"
     m1.metric("Prediction",        latest_result.prediction)
     m2.metric("Confidence",        f"{latest_result.confidence:.1%}")
     m3.metric("Packets Processed", st.session_state["total_packets"])
-    trend = st.session_state["accuracy_trend"]
-    delta = f"{(trend[-1] - trend[-2]):+.1%}" if len(trend) >= 2 else None
-    m4.metric("Confidence Δ",      f"{trend[-1]:.1%}" if trend else "—", delta=delta)
+    m4.metric("Inferences",        n_inf if n_inf > 0 else "—")
+    a1, a2, a3 = st.columns(3)
+    a1.metric("Top-1 Accuracy",    acc1_str)
+    a2.metric("Top-3 Accuracy",    acc3_str)
+    a3.metric("Avg GT Confidence", gtc_str,
+              help="Average probability assigned to the correct class, "
+                   "regardless of whether it was the top prediction.")
 else:
     m1.metric("Prediction",        "Waiting...")
     m2.metric("Confidence",        "—")
     m3.metric("Packets Processed", 0)
-    m4.metric("Confidence Δ",      "—")
+    m4.metric("Inferences",        "—")
+    a1, a2, a3 = st.columns(3)
+    a1.metric("Top-1 Accuracy",    "—")
+    a2.metric("Top-3 Accuracy",    "—")
+    a3.metric("Avg GT Confidence", "—")
 
 st.markdown("---")
 
@@ -387,9 +524,13 @@ v1, v2 = st.columns([2, 1])
 
 with v1:
     st.subheader("📈 Confidence Over Time")
-    trend = st.session_state["accuracy_trend"]
+    trend = st.session_state["conf_trend"]
     if trend:
-        st.line_chart(pd.DataFrame({"Confidence": trend}).rename_axis("Sample"))
+        chart_df = pd.DataFrame(trend).rename_axis("Sample")
+        # Drop GT Conf column if no ground truth was available this session
+        if chart_df["GT Conf"].isna().all():
+            chart_df = chart_df[["Prediction Conf"]]
+        st.line_chart(chart_df)
     else:
         st.info("Press Start to see live confidence trend.")
 
@@ -413,7 +554,7 @@ if latest_result:
     with st.expander("🔬 Last Feature Vector", expanded=False):
         feat_df = pd.DataFrame(latest_result.features.items(), columns=["Feature", "Value"])
         feat_df["Value"] = feat_df["Value"].apply(lambda x: f"{x:.3f}" if isinstance(x, float) else x)
-        st.dataframe(feat_df, use_container_width=True, hide_index=True)
+        st.dataframe(feat_df, width="stretch", hide_index=True)
 
 # ── LOGS ─────────────────────────────────────────────────────────────────────
 st.subheader("📟 Real-Time Logs")

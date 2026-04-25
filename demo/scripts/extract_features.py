@@ -4,7 +4,7 @@ extract_features.py
 Real-time website fingerprinting feature extractor for WF-Guard.
 
 Converts a window of raw scapy packets into:
-  - A 56-element numpy array for model.predict_proba()  (matches evaluate_models.py)
+  - A 113-element numpy array for model.predict_proba()  (matches evaluate_models.py)
   - A 14-key display dict matching dashboard.py FEATURE_NAMES
 
 Usage (inside RealDataSource):
@@ -21,28 +21,26 @@ from typing import List, Optional, Tuple
 import numpy as np
 
 # ---------------------------------------------------------------------------
-# Public feature name list (56 names, in order, matching the model vector)
+# Public feature name list (116 names, in order, matching the model vector)
 # ---------------------------------------------------------------------------
 FEATURE_NAMES = [
-    "total_count",
-    "out_count",
-    "in_count",
     "out_ratio",
     "size_ratio",
     "avg_out_burst",
     "avg_in_burst",
     "max_burst",
-    "burst_count",
-    "bin_tiny",       # packets < 100 B
-    "bin_medium",     # packets 100–999 B
-    "bin_large",      # packets >= 1000 B
+    "burst_density",   # bursts / total_count
+    "bin_tiny_frac",   # fraction of packets < 100 B
+    "bin_medium_frac", # fraction of packets 100–999 B
+    "bin_large_frac",  # fraction of packets >= 1000 B
     "size_mean",
     "size_std",
-    "cumsum_mean",
-    "cumsum_std",
-    # First 40 raw packet values (signed, zero-padded)
-    *[f"pkt_{i:02d}" for i in range(40)],
-]  # len == 56
+    "cumsum_mean_pp",  # mean(cumsum) / total_count (per-packet)
+    "cumsum_std_pp",   # std(cumsum) / total_count (per-packet)
+    # CUMUL: normalized cumulative sum interpolated to 100 fixed points (Panchenko et al. 2016)
+    # Normalized by total bytes → capture-length invariant shape feature
+    *[f"cumul_{i:03d}" for i in range(100)],
+]  # len == 113
 
 
 # ---------------------------------------------------------------------------
@@ -59,7 +57,11 @@ def _get_local_ip() -> str:
         return "127.0.0.1"
 
 
-def packets_to_trace(packets, local_ip: Optional[str] = None) -> np.ndarray:
+def packets_to_trace(
+    packets,
+    local_ip: Optional[str] = None,
+    tor_port: int = 9050,
+) -> np.ndarray:
     """
     Convert a list of scapy packets to a signed trace array.
 
@@ -67,12 +69,19 @@ def packets_to_trace(packets, local_ip: Optional[str] = None) -> np.ndarray:
       +size  if the packet originated from local_ip  (outgoing)
       -size  otherwise                                (incoming)
 
+    Loopback special case: when src and dst are both 127.x.x.x (Tor SOCKS5
+    traffic on the loopback interface), IP-based direction is impossible because
+    both sides share the same address. In this case TCP port is used instead:
+      packets addressed TO tor_port  → outgoing (client → Tor daemon)
+      packets addressed FROM tor_port → incoming (Tor daemon → client)
+
     Packets without an IP layer are skipped.
 
     Args:
         packets:  List of scapy packet objects.
         local_ip: Local machine IP for direction detection.
                   Auto-detected via UDP socket if None.
+        tor_port: Tor SOCKS5 port used for loopback direction detection.
 
     Returns:
         np.ndarray of signed float64 packet sizes.
@@ -85,7 +94,16 @@ def packets_to_trace(packets, local_ip: Optional[str] = None) -> np.ndarray:
         if not pkt.haslayer("IP"):
             continue
         size = float(len(pkt))
-        if pkt["IP"].src == local_ip:
+        src  = pkt["IP"].src
+        dst  = pkt["IP"].dst
+
+        # Loopback: src == dst == 127.x.x.x — use TCP port for direction
+        if src.startswith("127.") and dst.startswith("127."):
+            if pkt.haslayer("TCP"):
+                trace.append(size if pkt["TCP"].dport == tor_port else -size)
+            else:
+                trace.append(-size)
+        elif src == local_ip:
             trace.append(size)
         else:
             trace.append(-size)
@@ -93,23 +111,38 @@ def packets_to_trace(packets, local_ip: Optional[str] = None) -> np.ndarray:
     return np.array(trace, dtype=np.float64)
 
 
+def _cumul_interpolate(trace: np.ndarray, n_points: int = 100) -> list:
+    """Interpolate normalized cumulative sum of signed trace to n_points positions.
+    CUMUL representation (Panchenko et al., 2016).
+    Normalized by total bytes so the output is capture-length invariant."""
+    if len(trace) == 0:
+        return [0.0] * n_points
+    cumsum      = np.cumsum(trace)
+    total_bytes = float(np.sum(np.abs(trace)))
+    if total_bytes > 0:
+        cumsum = cumsum / total_bytes   # scale to [-1, 1] range
+    x_orig = np.linspace(0, 1, len(cumsum))
+    x_new  = np.linspace(0, 1, n_points)
+    return np.interp(x_new, x_orig, cumsum).tolist()
+
+
 def _extract_wf_features(trace: np.ndarray) -> list:
     """
-    Extract the 56-feature vector used by the Random Forest model.
+    Extract the 113-feature vector used by the Random Forest model.
+    Layout: 6 scale-free stats | 3 bin fractions | 1 burst density | 2 per-pkt cumsum stats | 100 CUMUL points
 
+    All features are normalized to be capture-length invariant.
     Mirrors evaluate_models.extract_wf_features() exactly.
-    The original has a minor bug (returns [0]*52 on empty trace);
-    corrected here to [0.0]*56.
 
     Args:
         trace: Signed packet-size array from packets_to_trace().
 
     Returns:
-        List of 56 floats.
+        List of 113 floats.
     """
     non_zero = trace[trace != 0]
     if non_zero.size == 0:
-        return [0.0] * 56
+        return [0.0] * 113
 
     out_pkts = non_zero[non_zero > 0]
     in_pkts  = non_zero[non_zero < 0]
@@ -122,10 +155,11 @@ def _extract_wf_features(trace: np.ndarray) -> list:
     size_ratio = (float(np.sum(out_pkts)) / float(abs(np.sum(in_pkts)))
                   if in_count > 0 else 0.0)
 
+    # Bin fractions (normalize by total_count — capture-length invariant)
     bins = [
-        int(np.sum(np.abs(non_zero) < 100)),
-        int(np.sum((np.abs(non_zero) >= 100) & (np.abs(non_zero) < 1000))),
-        int(np.sum(np.abs(non_zero) >= 1000)),
+        float(np.sum(np.abs(non_zero) < 100))   / total_count,
+        float(np.sum((np.abs(non_zero) >= 100) & (np.abs(non_zero) < 1000))) / total_count,
+        float(np.sum(np.abs(non_zero) >= 1000)) / total_count,
     ]
 
     # Burst detection
@@ -146,26 +180,22 @@ def _extract_wf_features(trace: np.ndarray) -> list:
     avg_in_burst  = (float(np.mean([abs(b) for b in bursts if b < 0]))
                      if any(b < 0 for b in bursts) else 0.0)
     max_burst     = float(np.max(np.abs(bursts)))
+    burst_density = float(len(bursts)) / total_count  # bursts per packet
 
     cumsum = np.cumsum(non_zero)
+    # Per-packet cumsum stats (divide by total_count to normalize for capture length)
     stats  = [
         float(np.mean(non_zero)),
         float(np.std(non_zero)),
-        float(np.mean(cumsum)),
-        float(np.std(cumsum)),
+        float(np.mean(cumsum)) / total_count,
+        float(np.std(cumsum))  / total_count,
     ]
-
-    head = np.pad(
-        non_zero[:40],
-        (0, max(0, 40 - len(non_zero))),
-        mode="constant",
-    )
+    cumul = _cumul_interpolate(non_zero, 100)
 
     return [
-        float(total_count), float(out_count), float(in_count),
         out_ratio, size_ratio,
-        avg_out_burst, avg_in_burst, max_burst, float(len(bursts)),
-    ] + bins + stats + head.tolist()
+        avg_out_burst, avg_in_burst, max_burst, burst_density,
+    ] + bins + stats + cumul
 
 
 def _extract_display_features(packets, trace: np.ndarray) -> dict:
@@ -268,6 +298,7 @@ def _extract_display_features(packets, trace: np.ndarray) -> dict:
 def extract_features(
     packets,
     local_ip: Optional[str] = None,
+    tor_port: int = 9050,
 ) -> Tuple[np.ndarray, dict]:
     """
     Convert a window of scapy packets into model and display features.
@@ -280,7 +311,7 @@ def extract_features(
     Returns:
         (model_vector, display_dict)
 
-        model_vector : np.ndarray, shape (56,), dtype float64
+        model_vector : np.ndarray, shape (113,), dtype float64
             Pass directly to model.predict_proba([model_vector]).
 
         display_dict : dict[str, float]
@@ -297,7 +328,7 @@ def extract_features(
         model_vector, display_dict = extract_features(sniffer.results)
         probs = model.predict_proba([model_vector])[0]
     """
-    trace        = packets_to_trace(packets, local_ip)
+    trace        = packets_to_trace(packets, local_ip, tor_port)
     wf_values    = _extract_wf_features(trace)
     model_vector = np.array(wf_values, dtype=np.float64)
     display_dict = _extract_display_features(packets, trace)

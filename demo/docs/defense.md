@@ -53,69 +53,61 @@ sudo service tor restart
 
 ---
 
-## Running the Proxy
+## Defense Control
+
+Defense state is controlled exclusively by the **dashboard sidebar toggle**
+("Enable WF-Guard"). There is no separate kill-switch process to run.
+
+The toggle sets/clears `_defense_enabled` — a `threading.Event` defined in
+`defense_proxy.py` and imported by `dashboard.py`. Both the dashboard and
+`defense_proxy.py` share this object, so the toggle is the single source
+of truth for all defense behavior.
+
+| State | Behavior |
+| --- | --- |
+| **Defense ON** | Randomized headers, jittered request timing, cover traffic active |
+| **Defense OFF** | Fixed User-Agent, no delay, cover traffic paused |
+
+---
+
+## Cover Traffic
+
+When defense is ON and the dashboard is running, a background thread sends
+randomized HEAD requests to public sites through Tor to inject dummy traffic
+and obscure real browsing patterns.
+
+Cover traffic is started when the dashboard **▶ Start** button is pressed
+and stopped when **⏹ Stop** is pressed, regardless of the defense toggle.
+The toggle only controls whether cover requests are actually sent (the
+thread idles when defense is OFF).
+
+---
+
+## Running defense_proxy.py Standalone
+
+`defense_proxy.py` can also run independently for testing or evaluation:
 
 ```bash
 cd demo/scripts
 python defense_proxy.py
 ```
 
-Expected startup output:
+Standalone mode performs a Tor connectivity check, sends one test request,
+and attempts identity rotation. Useful for verifying Tor is working before
+running the full demo.
+
+Expected output:
 
 ```text
 =======================================================
-  WF-Guard Defense Proxy
+  WF-Guard Defense Proxy — Tor Connectivity Check
+  Defense state is controlled by the dashboard UI.
 =======================================================
-[*] Kill switch active — type 'D' + Enter to toggle defense ON/OFF.
 [~] No pcap data found — using random delay fallback.
 [+] Cover traffic active.
 [+] Routing through Tor exit node: <exit IP>
 [+] Session User-Agent: Mozilla/5.0 ...
 ```
-
-If you see `Could not connect through Tor`:
-
-```bash
-sudo service tor start
-sudo service tor status
-```
-
----
-
-## Kill Switch
-
-Type `D` + Enter in the proxy terminal to toggle defense on/off:
-
-| State | Behavior |
-| --- | --- |
-| Defense ON (default) | Randomized headers, jittered timing, cover traffic active |
-| Defense OFF | Fixed User-Agent, no delay, cover traffic paused |
-
-```text
-[DEFENSE OFF] Anti-fingerprinting disabled.
-[DEFENSE ON]  Anti-fingerprinting enabled.
-```
-
----
-
-## Cover Traffic
-
-When defense is ON, a background thread sends randomized HEAD requests to 8
-public sites through Tor to inject dummy traffic and obscure real request
-patterns. Cover traffic pauses automatically when defense is toggled OFF.
-
----
-
-## Verifying Tor Routing
-
-The proxy prints your exit IP at startup. To verify manually:
-
-```python
-from defense_proxy import check_tor_ip
-check_tor_ip()
-```
-
-The returned IP must differ from your real IP. If they match, Tor is not routing.
 
 ---
 
@@ -158,7 +150,6 @@ Two possible causes:
    ```bash
    tor &
    ```
-   Tor will start in the background and listen on `127.0.0.1:9050`.
    Verify with: `curl --socks5-hostname 127.0.0.1:9050 https://api.ipify.org`
 
 **`python: command not found`**
@@ -184,3 +175,5 @@ with `sudo service tor restart`.
 ```bash
 sudo setcap cap_net_raw+eip $(readlink -f .venv/bin/python)
 ```
+
+This must be re-run after any pip upgrade that modifies the Python binary.
